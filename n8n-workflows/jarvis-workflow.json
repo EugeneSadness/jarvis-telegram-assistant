@@ -1,0 +1,232 @@
+{
+  "name": "Jarvis Telegram Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "jarvis",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Get the message text from webhook payload\nconst data = $input.item.json;\nlet message = '';\nlet userId = '';\n\n// Try to extract message from Telegram format\nif (data.message && data.message.text) {\n  message = data.message.text;\n  userId = data.message.from.id;\n} else {\n  // For testing via direct webhook call\n  message = data.text || '';\n  userId = data.userId || '12345';\n}\n\n// Check if this is a command for Jarvis\nif (message.toLowerCase().startsWith('jarvis')) {\n  // Extract the command part (after \"Jarvis\")\n  const command = message.substring(6).trim();\n  \n  // Determine command type\n  if (command.toLowerCase().includes('отправь')) {\n    // This is a send message command\n    // Extract message text and recipient count\n    const regex = /отправь\\s+\"([^\"]*)\"\\s+последним\\s+(\\d+)\\s+чатам/i;\n    const match = command.match(regex);\n    \n    if (match) {\n      const textToSend = match[1];\n      const chatCount = parseInt(match[2]);\n      \n      return {\n        json: {\n          command: 'send_message',\n          text: textToSend,\n          chatCount: chatCount,\n          userId: userId\n        }\n      };\n    }\n  }\n}\n\n// If no command matched or not addressed to Jarvis\nreturn {\n  json: {\n    command: 'unknown',\n    originalMessage: message,\n    userId: userId\n  }\n};"
+      },
+      "name": "Parse Command",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.command }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "send_message",
+              "output": 0
+            },
+            {
+              "value2": "unknown",
+              "output": 1
+            }
+          ]
+        }
+      },
+      "name": "Route Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "values": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer YOUR_DEEPSEEK_API_KEY"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "jsonParameters": true,
+        "bodyParametersJson": "{\n  \"model\": \"deepseek-chat\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты Jarvis, умный ассистент, который помогает пользователю с различными задачами.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.originalMessage }}\"\n    }\n  ],\n  \"temperature\": 0.7\n}"
+      },
+      "name": "DeepSeek API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 380]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract the AI response\nconst aiResponse = $input.item.json.choices && $input.item.json.choices[0] && $input.item.json.choices[0].message ?\n  $input.item.json.choices[0].message.content : 'Извините, я не смог обработать ваш запрос.';\n\nreturn {\n  json: {\n    message: aiResponse,\n    userId: $input.item.json.userId\n  }\n};"
+      },
+      "name": "Format AI Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1100, 380]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:3000/api/jarvis/command",
+        "method": "POST",
+        "sendQuery": false,
+        "bodyParametersJson": "={{JSON.stringify($json)}}",
+        "options": {}
+      },
+      "name": "Call Jarvis API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 220]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process Jarvis API response\nconst response = $input.item.json;\n\nreturn {\n  json: {\n    message: response.success\n      ? `Сообщение успешно отправлено в ${response.sentCount} из ${response.totalChats} чатов.`\n      : `Произошла ошибка: ${response.error}`,\n    userId: $json.userId\n  }\n};"
+      },
+      "name": "Format Send Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1100, 220]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Final Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "responseCode": 200,
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respond",
+      "typeVersion": 1,
+      "position": [1500, 300]
+    }
+  ],
+  "connections": {
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Command": {
+      "main": [
+        [
+          {
+            "node": "Route Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Command": {
+      "main": [
+        [
+          {
+            "node": "Call Jarvis API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DeepSeek API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek API": {
+      "main": [
+        [
+          {
+            "node": "Format AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format AI Response": {
+      "main": [
+        [
+          {
+            "node": "Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Jarvis API": {
+      "main": [
+        [
+          {
+            "node": "Format Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Send Result": {
+      "main": [
+        [
+          {
+            "node": "Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
